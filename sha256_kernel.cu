@@ -147,7 +147,7 @@ extern "C" __global__ void sha256(const uint32_t io[16], uint32_t w[8], uint8_t 
                 break;
         }
         nonce += step;
-        // this means a overflow occurred
+        // this means an overflow occurred
         if (nonce < step)
             return;
     }

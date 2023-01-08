@@ -1,8 +1,8 @@
-use std::time::Instant;
+use std::time::{Instant, UNIX_EPOCH};
 
 use cudarc::{
     jit::compile_ptx,
-    prelude::{CudaDeviceBuilder, CudaError, LaunchConfig, LaunchCudaFunction},
+    prelude::{CudaDeviceBuilder, DriverError, LaunchAsync, LaunchConfig},
 };
 
 const K: [u32; 64] = [
@@ -99,22 +99,18 @@ fn add_one(mut v: Vec<u32>) -> Vec<u32> {
     }
     v
 }
-unsafe fn _main(block_size: u32, grid_size: u32) -> Result<f64, CudaError> {
+unsafe fn _main(block_size: u32, grid_size: u32) -> Result<f64, DriverError> {
     let cuda = CudaDeviceBuilder::new(0)
         .with_ptx(
-            "sha256",
             compile_ptx(include_str!("./../sha256_kernel.cu")).unwrap(),
+            "sha256",
             &["sha256"],
         )
         .build()
         .unwrap();
-    // let mut properties = MaybeUninit::uninit();
-    // cuDeviceGetProperties(properties.as_mut_ptr(), 0)
-    //     .result()
-    //     .unwrap();
-    // println!("{:?}", properties.assume_init());
-    let sha256 = cuda.get_module("sha256").unwrap().get_fn("sha256").unwrap();
-    let block = any_as_u32_slice(&Block {
+    let sha256 = cuda.get_func("sha256", "sha256").unwrap();
+    // block from https://en.bitcoin.it/wiki/Block_hashing_algorithm
+    let block = Block {
         version: 0x01000000,
         prev: [
             0x81cd02ab, 0x7e569e8b, 0xcd9317e2, 0xfe99f2de, 0x44d49ab2, 0xb8851ba4, 0xa3080000,
@@ -124,11 +120,12 @@ unsafe fn _main(block_size: u32, grid_size: u32) -> Result<f64, CudaError> {
             0xe320b6c2, 0xfffc8d75, 0x0423db8b, 0x1eb942ae, 0x710e951e, 0xd797f7af, 0xfc8892b0,
             0xf1fc122b,
         ],
-        time: 0xc7f5d74d,
+        time: UNIX_EPOCH.elapsed().unwrap().as_secs() as u32,
         bits: 0xf2b9441a,
-        nonce: 0x42a14695,
-    });
-    let first_part = &block[..16];
+        nonce: 0,
+    };
+    let block_slice = any_as_u32_slice(&block);
+    let first_part = &block_slice[..16];
     let initial = vec![
         0x6a09e667u32,
         0xbb67ae85,
@@ -185,7 +182,7 @@ unsafe fn _main(block_size: u32, grid_size: u32) -> Result<f64, CudaError> {
     }
 
     let mut to_hash = [0u32; 16];
-    to_hash[..4].copy_from_slice(&block[16..]);
+    to_hash[..4].copy_from_slice(&block_slice[16..]);
     to_hash[4] = 1 << (u32::BITS - 1);
     to_hash[16 - 1] = 80 * 8;
     let hash_io = cuda.take_async(to_hash.to_vec()).unwrap();
@@ -208,10 +205,8 @@ unsafe fn _main(block_size: u32, grid_size: u32) -> Result<f64, CudaError> {
         .collect(),
     )?;
     let mut finished_counter = cuda.take_async(vec![0]).unwrap();
-    // println!("Start");
     let start = Instant::now();
-    cuda.launch_async(
-        sha256,
+    sha256.launch_async(
         LaunchConfig {
             block_dim: (block_size, 1, 1),
             grid_dim: (grid_size, 1, 1),
@@ -261,9 +256,12 @@ fn main() {
     //     }
     // }
     //
-    // 256/16 is most efficient
+    // 256/16 is most efficient, 33.8s for 2^32 hashes on a
+    // NVIDIA GeForce GTX 1050 ti;
+    // 2^32H / 33.8s = 127070038.343 H/s = 127.07 MH/s,
+    // about 10-100x faster than the hashrate stated online
     unsafe {
-        _main(256, 16).unwrap();
+        println!("Elapsed: {}s", _main(256, 16).expect("No nonce found."));
     }
 }
 
