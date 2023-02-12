@@ -116,7 +116,7 @@ __device__ void _sha256(uint32_t input[64], uint32_t output[64], const uint32_t 
     COMPRESSION(output, output, initial, a, b, c, d, e, f, g, h);
 }
 
-extern "C" __global__ void sha256(const uint32_t io[16], uint32_t w[8], uint8_t target[32], const uint32_t i[8], uint32_t finished[1])
+extern "C" __global__ void sha256(const uint32_t io[16], uint32_t w[8], uint32_t target[8], const uint32_t i[8], uint32_t finished[1])
 {
     uint32_t initial = blockIdx.x * blockDim.x + threadIdx.x, nonce = initial;
     uint32_t step = gridDim.x * blockDim.x;
@@ -124,7 +124,6 @@ extern "C" __global__ void sha256(const uint32_t io[16], uint32_t w[8], uint8_t 
     uint32_t _in[64];
     memcpy(_in, io, 16 * 4);
     uint32_t _out[64];
-    uint8_t *_bout = (uint8_t *)_out;
     _out[8] = 1 << 31;
     memset(_out + 9, 0, (15 - 9) * 4);
     _out[15] = 256;
@@ -132,18 +131,14 @@ extern "C" __global__ void sha256(const uint32_t io[16], uint32_t w[8], uint8_t 
     {
         _in[3] = nonce;
         _sha256(_in, _out, i, w);
-        for (int b = 31; b >= 0; b--)
+        for (int b = 7; b >= 0; b--)
         {
-            if (_bout[b] < target[b] && false)
+            if (_out[b] < target[b])
             {
-                if (atomicAdd(finished, 1) == 0)
-                {
-                    memcpy(w, _out, 7 * 4);
-                    w[7] = nonce;
-                }
+                if (atomicAdd(finished, 1) == 0) w[0] = nonce;
                 return;
             }
-            else if (_bout[b] > target[b])
+            else if (_out[b] > target[b])
                 break;
         }
         nonce += step;

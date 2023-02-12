@@ -7,3 +7,6 @@ edition = "2021"
 
 [dependencies]
 cudarc = {git = "https://github.com/M1ngXU/cudarc.git"}
+hex-literal = "0.3.4"
+bitcoin = "0.29.2"
+itertools = "0.10.5"
